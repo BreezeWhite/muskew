@@ -33,7 +33,7 @@ Overview
 
 
 ### Predict stafflines
-The model was trained on (DeepScore-dense)[https://tuggeluk.github.io/downloads/]. Various transformations are applied while training
+The model was trained on [DeepScore-dense](https://tuggeluk.github.io/downloads/). Various transformations are applied while training
 to make the model more robust to rotations, blurs, and different qualities of images.
 
 Input Image:
@@ -82,4 +82,4 @@ to all other positions by interpolation. Here we use **linear interpolation** an
 ### Apply the mapping
 Finally, we apply the mapping to the image.
 
-![](figures/reiver_deskew.jpg)
+![](figures/river_deskew.jpg)
