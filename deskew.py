@@ -29,8 +29,8 @@ def resize_image(image):
 
 
 def inference(img_path, step_size=128, batch_size=16):
-    arch_path = "./checkpoint/arch.json"
-    w_path = "./checkpoint/weights.h5"
+    arch_path = "./checkpoint/arch_2.json"
+    w_path = "./checkpoint/test_w.h5"
     model = tf.keras.models.model_from_json(open(arch_path, "r").read())
     model.load_weights(w_path)
     input_shape = model.input_shape[1:]
@@ -295,6 +295,7 @@ def build_mapping(gg_map, min_width_ratio=0.4):
 
     points = []
     coords_y = np.zeros_like(gg_map)
+    period = 10  # Smooth factor. The larger, the anchor points will be less.
     for i in range(num):
         y, x = np.where(regions==i+1)
         w = np.max(x) - np.min(x)
@@ -304,12 +305,13 @@ def build_mapping(gg_map, min_width_ratio=0.4):
         target_y = round(np.mean(y))
 
         uniq_x = np.unique(x)
-        for ux in uniq_x:
-            meta_idx = np.where(x==ux)[0]
-            sub_y = y[meta_idx]
-            cen_y = round(np.mean(sub_y))
-            coords_y[target_y, ux] = cen_y
-            points.append((target_y, ux))
+        for ii, ux in enumerate(uniq_x):
+            if ii % period == 0:
+                meta_idx = np.where(x==ux)[0]
+                sub_y = y[meta_idx]
+                cen_y = round(np.mean(sub_y))
+                coords_y[target_y, ux] = cen_y
+                points.append((target_y, ux))
 
     # Add corner case
     coords_y[0] = 0
@@ -358,6 +360,7 @@ if __name__ == "__main__":
 
     print("Predicting stafflines")
     staff_pred, _ = inference(infile)
+    staff_pred = np.where(staff_pred==1, 1, 0)
 
     print("Deskewing")
     coords_x, coords_y = estimate_coords(staff_pred)
