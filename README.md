@@ -1,6 +1,6 @@
 # Music Sheet Deskew
 
-Deskew the music sheet along y axis.
+Deskew the phone-taken music sheet. This is an independent part separated from [oemer](https://github.com/BreezeWhite/oemer), targeting more general usage scenarios without the full pipeline of OMR.
 
 **Does not handle 3D rotation**, so make sure the sheet is roughly vertically and horizontally aligned.
 

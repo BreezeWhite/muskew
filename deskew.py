@@ -1,21 +1,23 @@
 import os
 import sys
-
-# Turn off the annoying TF logs.
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import pickle
+from PIL import Image
 
 import cv2
 import numpy as np
-import tensorflow as tf
 import scipy.ndimage
+import onnxruntime as rt
 from scipy.interpolate import griddata, interp1d
 from sklearn.linear_model import LinearRegression
+
+
+MODULE_PATH = os.path.abspath(os.path.dirname(__file__))
 
 
 def resize_image(image):
     # Estimate target size with number of pixels.
     # Best number would be 3M~4.35M pixels.
-    h, w, _ = image.shape
+    w, h = image.size
     pis = w * h
     if 3000000 <= pis <= 435000:
         return image
@@ -25,21 +27,25 @@ def resize_image(image):
     tar_w = round(ratio * w)
     tar_h = round(ratio * h)
     print(f"Resized to: {tar_w} x {tar_h} (original: {w} x {h})")
-    return cv2.resize(image, (tar_w, tar_h))
+    return image.resize((tar_w, tar_h))
 
 
-def inference(img_path, step_size=128, batch_size=16):
-    arch_path = "./checkpoint/arch_2.json"
-    w_path = "./checkpoint/test_w.h5"
-    model = tf.keras.models.model_from_json(open(arch_path, "r").read())
-    model.load_weights(w_path)
-    input_shape = model.input_shape[1:]
+def inference(img_path, step_size=128, batch_size=16, manual_th=None):
+    model_path = os.path.join(MODULE_PATH, "checkpoint")
+    onnx_path = os.path.join(model_path, "model.onnx")
+    metadata = pickle.load(open(os.path.join(model_path, "metadata.pkl"), "rb"))
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    sess = rt.InferenceSession(onnx_path, providers=providers)
+    output_names = metadata['output_names']
+    input_shape = metadata['input_shape']
+    output_shape = metadata['output_shape']
 
     # Collect data
+    # Tricky workaround to avoid random mistery transpose when loading with 'Image'.
     image = cv2.imread(img_path)
-    image = image[..., :3]  # Remove alpha channel
-    image = resize_image(image)
-    win_size = input_shape[0]
+    image = Image.fromarray(image).convert("RGB")
+    image = np.array(resize_image(image))
+    win_size = input_shape[1]
     data = []
     for y in range(0, image.shape[0], step_size):
         if y + win_size > image.shape[0]:
@@ -55,12 +61,11 @@ def inference(img_path, step_size=128, batch_size=16):
     for idx in range(0, len(data), batch_size):
         print(f"{idx+1}/{len(data)} (step: {batch_size})", end="\r")
         batch = np.array(data[idx:idx+batch_size])
-        out = model.predict(batch)
+        out = sess.run(output_names, {'input': batch})[0]
         pred.append(out)
-    print()
 
     # Merge prediction patches
-    output_shape = image.shape[:2] + (model.output_shape[-1],)
+    output_shape = image.shape[:2] + (output_shape[-1],)
     out = np.zeros(output_shape, dtype=np.float32)
     mask = np.zeros(output_shape, dtype=np.float32)
     hop_idx = 0
@@ -78,7 +83,13 @@ def inference(img_path, step_size=128, batch_size=16):
             hop_idx += 1
 
     out /= mask
-    class_map = np.argmax(out, axis=-1)
+    if manual_th is None:
+        class_map = np.argmax(out, axis=-1)
+    else:
+        assert len(manual_th) == output_shape[-1]-1, f"{manual_th}, {output_shape[-1]}"
+        class_map = np.zeros(out.shape[:2] + (len(manual_th),))
+        for idx, th in enumerate(manual_th):
+            class_map[..., idx] = np.where(out[..., idx+1]>th, 1, 0)
 
     return class_map, out
 
@@ -91,7 +102,7 @@ class Grid:
 
     @property
     def y_center(self):
-        return round((self.bbox[1]+self.bbox[3]) / 2)
+        return (self.bbox[1]+self.bbox[3]) / 2
 
     @property
     def height(self):
@@ -181,34 +192,39 @@ def build_grid_group(grid_map, grids):
 
 def connect_nearby_grid_group(gg_map, grid_groups, grid_map, grids, ref_count=8, max_step=20):
     new_gg_map = np.copy(gg_map)
-    visited_ggid = []
     ref_gids = grid_groups[0].gids[:ref_count]
     idx = 0
     gg = grid_groups[idx]
-    while idx < len(grid_groups):
-        # Check if visited
-        if gg.id in visited_ggid:
-            idx += 1
-            if idx < len(grid_groups):
-                gg = grid_groups[idx]
-                ref_gids = grid_groups[idx].gids[:ref_count]
+    remaining = set(range(len(grid_groups)))
+    while remaining:
+        # Check if not yet visited
+        if gg.id not in remaining:
+            if remaining:
+                gid = remaining.pop()
+                gg = grid_groups[gid]
+                ref_gids = gg.gids[:ref_count]
+            else:
+                break
+        else:
+            remaining.remove(gg.id)
+
+        if len(ref_gids) < 2:
             continue
-        visited_ggid.append(gg.id)
 
         # Extend on the left side
+        step_size = gg.split_unit
         centers = [grids[gid].y_center for gid in ref_gids]
-        x = np.arange(len(centers)).reshape(-1, 1)
+        x = np.arange(len(centers)).reshape(-1, 1) * step_size
         model = LinearRegression().fit(x, centers)
         ref_box = grids[ref_gids[0]].bbox
 
-        step_size = gg.split_unit
         end_x = ref_box[0]
         h = ref_box[3] - ref_box[1]
         cands_box = []  # Potential trajectory
-        hit = False
         for i in range(max_step):
-            cen_y = model.predict([[-i-1]])[0]  # Interpolate y center
-            y = round(cen_y - h / 2)
+            tar_x = (-i - 1) * step_size
+            cen_y = model.predict([[tar_x]])[0]  # Interpolate y center
+            y = int(round(cen_y - h / 2))
             region = new_gg_map[y:y+h, end_x-step_size:end_x]  # Area to check
             unique, counts = np.unique(region, return_counts=True)
             labels = set(unique)  # Overlapped grid group IDs
@@ -217,33 +233,32 @@ def connect_nearby_grid_group(gg_map, grid_groups, grid_map, grids, ref_count=8,
 
             cands_box.append((end_x-step_size, y, end_x, y+h))
             if len(labels) == 0:
-                end_x = end_x - step_size
+                end_x -= step_size
             else:
-                # Check the overlappiong with the traget grid group is valid.
-                valid = True
-                for label in labels:
-                    tar_box = grid_groups[label].bbox
-                    if tar_box[2] > end_x:
-                        valid = False
-                        break
-                if not valid:
-                    break
+                cands_box = cands_box[:-1]  # Remove the overlapped box
 
                 # Determine the overlapped grid group id
                 if len(labels) > 1:
+                    # Overlapped with more than one group
                     overlapped_size = sorted(zip(unique, counts), key=lambda it: it[1], reverse=True)
                     label = overlapped_size[0][0]
                 else:
                     label = labels.pop()
 
+                # Check the overlappiong with the traget grid group is valid.
+                tar_box = grid_groups[label].bbox
+                if tar_box[2] > end_x:
+                    break
+
                 # Start assign grid to disconnected position.
-                # Get the grid ID
+                # Get the grid ID.
                 yidx, xidx = np.where(region==label)
                 yidx += y
                 xidx += end_x-step_size
                 reg = grid_map[yidx, xidx]
                 grid_id = np.unique(reg)
                 assert len(grid_id) == 1, grid_id
+                assert grid_id in grid_groups[label].gids, f"{grid_id}, {label}"
                 grid = grids[int(grid_id[0])]
 
                 # Interpolate y centers between the start and end points again.
@@ -267,24 +282,17 @@ def connect_nearby_grid_group(gg_map, grid_groups, grid_map, grids, ref_count=8,
                         max(gg.bbox[2], box[2]),
                         max(gg.bbox[3], box[3])
                     )
+                    gg.bbox = [int(bb) for bb in gg.bbox]
+                    box = [int(bb) for bb in box]
                     grids.append(grid)
                     new_gg_map[box[1]:box[3], box[0]:box[2]] = gg.id
 
                 # Continue to track on the overlapped grid group.
                 gg = grid_groups[label]
-                gids = gg.gids + cands_ids
+                gids = gg.gids + cands_ids[::-1]
                 ref_gids = gids[:ref_count]
 
-                # Update the state
-                hit = True
                 break
-
-        # Update the state
-        if not hit:
-            idx += 1
-            if idx < len(grid_groups):
-                ref_gids = grid_groups[idx].gids[:ref_count]
-                gg = grid_groups[idx]
 
     return new_gg_map
 
@@ -295,7 +303,7 @@ def build_mapping(gg_map, min_width_ratio=0.4):
 
     points = []
     coords_y = np.zeros_like(gg_map)
-    period = 10  # Smooth factor. The larger, the anchor points will be less.
+    period = 10
     for i in range(num):
         y, x = np.where(regions==i+1)
         w = np.max(x) - np.min(x)
@@ -310,7 +318,7 @@ def build_mapping(gg_map, min_width_ratio=0.4):
                 meta_idx = np.where(x==ux)[0]
                 sub_y = y[meta_idx]
                 cen_y = round(np.mean(sub_y))
-                coords_y[target_y, ux] = cen_y
+                coords_y[int(target_y), int(ux)] = cen_y
                 points.append((target_y, ux))
 
     # Add corner case
@@ -324,13 +332,10 @@ def build_mapping(gg_map, min_width_ratio=0.4):
 
 
 def estimate_coords(staff_pred):
-    # Increase line width
     ker = np.ones((6, 1), dtype=np.uint8)
     pred = cv2.dilate(staff_pred.astype(np.uint8), ker)
-
-    # Eliminate noises
     ker = np.ones((1, 6), dtype=np.uint8)
-    pred = cv2.morphologyEx(pred, cv2.MORPH_OPEN, ker)
+    pred = cv2.erode(pred, ker)
 
     print("Building grids")
     grid_map, grids = build_grid(pred)
@@ -344,8 +349,8 @@ def estimate_coords(staff_pred):
     print("Building mapping")
     coords_y, points = build_mapping(new_gg_map)
 
-    print("Gernerating mapping coordinates")
-    vals = coords_y[points[:, 0], points[:, 1]]
+    print("Dewarping")
+    vals = coords_y[points[:, 0].astype(int), points[:, 1].astype(int)]
     grid_x, grid_y = np.mgrid[0:gg_map.shape[0]:1, 0:gg_map.shape[1]:1]
     coords_y = griddata(points, vals, (grid_x, grid_y), method='linear')
 
@@ -354,7 +359,7 @@ def estimate_coords(staff_pred):
     return coords_x, coords_y
 
 
-if __name__ == "__main__":
+def main():
     infile = sys.argv[1]
     print(f"Received file: {infile}")
 
@@ -374,3 +379,7 @@ if __name__ == "__main__":
     out_file = infile.replace(ext, "_deskew"+ext)
     cv2.imwrite(out_file, img)
     print(f"File written to: {out_file}")
+
+
+if __name__ == "__main__":
+    main()
