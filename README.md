@@ -1,6 +1,6 @@
 # Music Sheet Deskew
 
-Deskew the phone-taken music sheet. This is an independent part separated from [oemer](https://github.com/BreezeWhite/oemer), targeting more general usage scenarios without the full pipeline of OMR.
+Deskew the phone-taken music sheet photo. This is an independent part separated from [oemer](https://github.com/BreezeWhite/oemer), targeting more general usage scenarios without the full pipeline of OMR.
 
 **Does not handle 3D rotation**, so make sure the sheet is roughly vertically and horizontally aligned.
 
@@ -12,7 +12,7 @@ Deskew the phone-taken music sheet. This is an independent part separated from [
 ``` bash
 git clone https://github.com/BreezeWhite/music-sheet-deskewing
 cd music-sheet-deskewing
-pip install -e requirements.txt
+pip install -r requirements.txt
 python deskew.py <infile>
 ```
 
