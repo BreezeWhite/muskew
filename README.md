@@ -1,8 +1,10 @@
-# Music Sheet Deskew
+# Muskew
 
-Deskew the phone-taken music sheet photo. This is an independent part separated from [oemer](https://github.com/BreezeWhite/oemer), targeting more general usage scenarios without the full pipeline of OMR.
+Music sheet deskewing: deskew/dewarp the curved music sheet photo with deep learning model. Directly process on raw photo input, and thus no need for the strict requirements on the input image. Just use it like you would do in daily life: take a photo of your favorite music sheet, pass it to `muskew`, and it will do all the rest of things for you, returns you with a plain, unwrapped image.
 
-**Does not handle 3D rotation**, so make sure the sheet is roughly vertically and horizontally aligned.
+Notice that this is an independent part separated from [oemer](https://github.com/BreezeWhite/oemer), targeting for a more general usage scenarios without embbeded with the full pipeline of OMR.
+
+**Attention!** Muskew does not handle 3D rotation, so make sure the sheet in the photo is roughly vertically and horizontally aligned.
 
 ![](figures/wind_deskew.png)
 ![](figures/chihiro_deskew.png)
@@ -10,10 +12,8 @@ Deskew the phone-taken music sheet photo. This is an independent part separated 
 ## Quick Start
 
 ``` bash
-git clone https://github.com/BreezeWhite/music-sheet-deskewing
-cd music-sheet-deskewing
-pip install -r requirements.txt
-python deskew.py <infile>
+pip install git+https://github.com/BreezeWhite/music-sheet-deskewing
+muskew <path_to_image>
 ```
 
 The output file will be stored to where the input file is, with postfix *_dewarp* added to the filename.
