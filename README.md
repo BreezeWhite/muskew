@@ -12,7 +12,7 @@ Notice that this is an independent part separated from [oemer](https://github.co
 ## Quick Start
 
 ``` bash
-pip install git+https://github.com/BreezeWhite/music-sheet-deskewing
+pip install git+https://github.com/BreezeWhite/muskew
 muskew <path_to_image>
 ```
 

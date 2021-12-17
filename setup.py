@@ -17,7 +17,7 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     license='MIT',
     license_files=('LICENSE',),
-    url='https://github.com/BreezeWhite/music-sheet-deskewing',
+    url='https://github.com/BreezeWhite/muskew',
     packages=setuptools.find_packages(),
     package_data={
         '': [
