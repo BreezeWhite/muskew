@@ -1,0 +1,6 @@
+opencv-python
+numpy
+scipy
+scikit-learn
+onnxruntime-gpu
+pillow
